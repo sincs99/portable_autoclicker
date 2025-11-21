@@ -29,6 +29,7 @@ env/
 .DS_Store
 Thumbs.db
 desktop.ini
+RELEASE_NOTES.md
 
 # Logs
 *.log
