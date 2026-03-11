@@ -78,6 +78,18 @@ class AutoclickerApp:
         self.delay_entry.bind("<FocusOut>", self.on_delay_changed)
         self.delay_entry.bind("<Return>", self.on_delay_changed)
 
+        self.stop_after_frame = ttk.LabelFrame(self.main_frame, text="Auto Stop", padding="5")
+        self.stop_after_frame.pack(fill=tk.X, pady=5)
+
+        self.stop_after_label = ttk.Label(self.stop_after_frame, text="Stop after X clicks:")
+        self.stop_after_label.pack(side=tk.LEFT, padx=5)
+
+        self.stop_after_entry = ttk.Entry(self.stop_after_frame, width=10)
+        self.stop_after_entry.pack(side=tk.LEFT, padx=5)
+        self.stop_after_entry.insert(0, self.settings.get("stop_after_clicks", ""))
+        self.stop_after_entry.bind("<FocusOut>", self.on_stop_after_changed)
+        self.stop_after_entry.bind("<Return>", self.on_stop_after_changed)
+
         # Autoclicker frame
         self.click_frame = ttk.LabelFrame(self.main_frame, text="Autoclicker", padding="5")
         self.click_frame.pack(fill=tk.X, pady=5)
@@ -119,6 +131,8 @@ class AutoclickerApp:
         self.running = False
         self.autoclicking = False
         self.click_thread = None
+        self.stop_after_clicks_limit = None
+        self.stop_reason = "Stopped"
 
         saved_position = self.settings.get("saved_position")
         if (
@@ -139,6 +153,7 @@ class AutoclickerApp:
             "delay": "1.0",
             "always_on_top": True,
             "saved_position": None,
+            "stop_after_clicks": "",
         }
 
         try:
@@ -170,6 +185,12 @@ class AutoclickerApp:
         ):
             settings["saved_position"] = saved_position
 
+        stop_after_clicks = data.get("stop_after_clicks")
+        if isinstance(stop_after_clicks, str):
+            settings["stop_after_clicks"] = stop_after_clicks
+        elif isinstance(stop_after_clicks, int):
+            settings["stop_after_clicks"] = str(stop_after_clicks)
+
         return settings
 
     def save_settings(self):
@@ -177,6 +198,7 @@ class AutoclickerApp:
             "delay": self.delay_entry.get().strip() or "1.0",
             "always_on_top": self.topmost_var.get(),
             "saved_position": list(self.saved_position) if self.saved_position else None,
+            "stop_after_clicks": self.stop_after_entry.get().strip(),
         }
 
         try:
@@ -186,6 +208,9 @@ class AutoclickerApp:
             pass
 
     def on_delay_changed(self, _event=None):
+        self.save_settings()
+
+    def on_stop_after_changed(self, _event=None):
         self.save_settings()
 
     def on_close(self):
@@ -251,6 +276,26 @@ class AutoclickerApp:
             messagebox.showerror("Error", "Please enter a valid positive number for delay")
             return None
 
+    def validate_stop_after_clicks(self):
+        value = self.stop_after_entry.get().strip()
+        if value == "":
+            return None
+
+        try:
+            limit = int(value)
+        except ValueError:
+            messagebox.showerror("Error", "Stop after X clicks must be a whole number")
+            return False
+
+        if limit < 0:
+            messagebox.showerror("Error", "Stop after X clicks cannot be negative")
+            return False
+
+        if limit == 0:
+            return None
+
+        return limit
+
     def update_status(self, status):
         self.status_var.set(f"Status: {status}")
 
@@ -266,6 +311,11 @@ class AutoclickerApp:
             
             # Update counter on GUI thread
             self.root.after(0, self.update_counter)
+
+            if self.stop_after_clicks_limit and self.click_count >= self.stop_after_clicks_limit:
+                self.stop_reason = f"Stopped after {self.click_count} clicks"
+                self.root.after(0, self.stop_autoclicking)
+                break
             
             delay = float(self.delay_entry.get())
             time.sleep(delay)
@@ -278,8 +328,14 @@ class AutoclickerApp:
             delay = self.validate_delay()
             if delay is None:
                 return
+
+            stop_after_clicks_limit = self.validate_stop_after_clicks()
+            if stop_after_clicks_limit is False:
+                return
             
             self.save_settings()
+            self.stop_after_clicks_limit = stop_after_clicks_limit
+            self.stop_reason = "Stopped"
             self.running = True
             self.autoclicking = True
             
@@ -295,8 +351,8 @@ class AutoclickerApp:
         if self.running:
             self.autoclicking = False
             self.running = False
-            self.update_status("Stopped")
-            if self.click_thread:
+            self.update_status(self.stop_reason)
+            if self.click_thread and threading.current_thread() is not self.click_thread:
                 self.click_thread.join(timeout=1.0)
             self.click_thread = None
 
